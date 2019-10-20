@@ -5,6 +5,7 @@ const fs = require('graceful-fs');
 const path = require('path');
 const Promise = require('bluebird');
 const yazl = require('yazl');
+const sharp = require('sharp');
 const logFd = fs.openSync('./log.txt','as',0o700);
 const app = express();
 const PORT = 12001;
@@ -12,10 +13,15 @@ const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000;
 
 const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position: relative; display: inline-block; padding: 10px}'
-  +'.text {display:block; float:none; margin:auto; position:static}';
+  +' .text {display:block; float:none; margin:auto; position:static}'
+  +' .dl {text-align: center;border: 3px solid black;border-radius: 16px;width: 30%;display: block;margin-left: auto;margin-right: auto}';
 
-const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">Files and Folders</h1></br><div>';
+const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">';
 const END_LISTING_HTML='</div></body></html>';
+
+mkdirp.sync('./file-dir');
+mkdirp.sync('./thumbnails');
+mkdirp.sync('./temp');
 
 class Logger {
   getPrefix(type){
@@ -46,6 +52,17 @@ class PasswordStore {
       this.map = JSON.parse(fs.readFileSync('./passwords.json',{encoding: 'utf8', flag: 'r'}));
     } catch (e) {
       //oh well
+    }
+  }
+  
+  //starts with /inf, for example
+  hasAccess(path, pass) {
+    const parts = path.split('/');
+    try {
+      const result = this.map[parts[2]];
+      return !result || pass == result;
+    } catch (e) {
+      return false;
     }
   }
 }
@@ -264,10 +281,11 @@ function packageRecursively(topDirectory, archiver) {
 function doZip(req,res,next) {
   if (req.query.zip == '1') {
     //req.path includes slash
-    let reqPath = req.path;
-    if (req.path.endsWith('/')) {
-      reqPath = req.path.substring(0,req.path.length-1);
-    }    
+    let reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
+    //TODO security still incomplete, prevent this
+    if (reqPath == "/inf") {
+      res.status(400).send("<h1>Cannot download root</h1>");
+    }
     const source = `./file-dir${reqPath}`;
     const destination = `./file-dir/temp${reqPath}.zip`;
     
@@ -319,31 +337,47 @@ function serveListing(req,res,next) {
       fs.readdir(objPath,{withFileTypes: true},function(err, files) {
         if (!err) {
           let html = START_LISTING_HTML;
+          if (reqPath == "/inf") {
+            html+= 'Files and Folders</h1></br><div>';
+          } else {
+            let backUrl = req.baseUrl+reqPath.substr(0,reqPath.lastIndexOf('/'));
+            if (req.query.pass) {
+              backUrl+='?pass='+req.query.pass;
+            }
+            html+=`<a href="${backUrl}"><i class="fa fa-backward" style="color: black; margin-right:15px;border: 5px solid black;border-radius: 10px;padding: 2px 5px 2px 0px;"></i></a>Files and Folders</h1></br>`;
+            html+= `<a style="color: black" href="${req.originalUrl+ (Object.keys(req.query)==0 ? '?zip=1' : '&zip=1')}"><div class="dl">`
+              +'<i class="fa fa-floppy-o" style="padding: 5px; font-size: 2em">  Download as Zip</i>'
+              +'</div></a><div>';
+          }
           files.forEach(function(file){
-            const pathUrl = `/files${reqPath}/${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
-            if (file.isDirectory()) {
-              html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
-            } else {
-              const period = file.name.lastIndexOf('.');
-              if (period == -1) {
-                html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color: black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
+            if (passStore.hasAccess(reqPath+'/'+file.name, req.query.pass)) {
+              const fileWithQuery = `${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
+              const pathUrl = `/files${reqPath}/${fileWithQuery}`;
+              if (file.isDirectory()) {
+                html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
               } else {
-                let ext = file.name.substr(period+1).toLowerCase();
-                switch (ext) {
-                case 'jpg':
-                case 'png':
-                case 'gif':
-                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" height="256" width="256"></a><span class="text">${file.name}</span></span>`;
-                  break;
-                case 'mp3':
-                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a><span>${file.name}</span></span>`;
-                  break;
-                case 'mp4':
-                case 'webm':
-                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a><span>${file.name}</span></span>`;
-                  break;
-                default:
-                  html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
+                const period = file.name.lastIndexOf('.');
+                if (period == -1) {
+                  html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color: black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
+                } else {
+                  let ext = file.name.substr(period+1).toLowerCase();
+                  switch (ext) {
+                  case 'jpg':
+                  case 'png':
+                  case 'gif':
+                    const thumbnailPath = `/thumbnails${reqPath}/${fileWithQuery}`;
+                    html+= `<span class="main"><a href="${pathUrl}"><img src="${thumbnailPath}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" width="256"></a><span class="text">${file.name}</span></span>`;
+                    break;
+                  case 'mp3':
+                    html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" width="256"></a><span>${file.name}</span></span>`;
+                    break;
+                  case 'mp4':
+                  case 'webm':
+                    html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" width="256"></a><span>${file.name}</span></span>`;
+                    break;
+                  default:
+                    html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
+                  }
                 }
               }
             }
@@ -375,7 +409,44 @@ function getStats(req,res) {
     cpus: os.cpus()
   });
 }
+
+
+function makeThumbnail(req,res,next) {
+  const reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
+  const originalPath = path.resolve('./file-dir','.'+reqPath);
+  const lastSlash = reqPath.lastIndexOf('/');
+  const directory = path.join('./thumbnails','.'+reqPath.substr(0,lastSlash));
+  const file = reqPath.substr(lastSlash+1);
+  const output = path.resolve(directory, file);
+  fs.access(output,fs.constants.R_OK,function(err){
+    if (!err) {
+      next();
+    } else {
+      mkdirp(directory, function(err){
+        if (!err) {          
+          const imageBuffer = fs.readFileSync(originalPath);
+          
+          sharp(imageBuffer)
+            .resize({ width: 256, height: 256, fit: 'inside', withoutEnlargement: true })
+            .toFile(output, function(err, info) {
+              if (!err) {
+                next();
+              } else {
+                log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
+                res.sendFile(originalPath);
+              }
+            });
+        } else {
+          log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
+          res.sendFile(originalPath);
+        }
+      });
+    }
+  });
+}
+
 app.use('/stats', [logReqs, getStats]);
+app.use('/thumbnails', [forbidden, checkPassword, makeThumbnail, express.static('./thumbnails')]);
 app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
 app.use('/assets/fa',[express.static('./node_modules/font-awesome')]);
 const WARNING_PATH = path.resolve('./warning.png');
