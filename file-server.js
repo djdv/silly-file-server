@@ -11,14 +11,11 @@ const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000;
 
-const HTML_STYLE = 'table {width: 100%}'
-  +'table, th, td {border-collapse: collapse;}'
-  +'th, td {   border: 2px solid black; padding: 5px; text-align: center; width: fit-content}'
-  +'span {text-align: center; vertical-align: middle; position: relative; display: inline-block}'
+const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position: relative; display: inline-block; padding: 10px}'
+  +'.text {display:block; float:none; margin:auto; position:static}';
 
-const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style></head><body><h1 style="text-align:center">Files and Folders</h1></br><table>'
-+'<tr><th>Name</th><th>Type</th><th>Content</th></tr>';
-const END_LISTING_HTML='</table></body></html>';
+const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">Files and Folders</h1></br><div>';
+const END_LISTING_HTML='</div></body></html>';
 
 class Logger {
   getPrefix(type){
@@ -325,37 +322,30 @@ function serveListing(req,res,next) {
           files.forEach(function(file){
             const pathUrl = `/files${reqPath}/${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
             if (file.isDirectory()) {
-              html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                +`<td>Folder</td><td><a href="${pathUrl}"><b>Enter</b></a></td>`;
+              html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
             } else {
               const period = file.name.lastIndexOf('.');
               if (period == -1) {
-                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                +`<td>File</td><td></td>`;
+                html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color: black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
               } else {
                 let ext = file.name.substr(period+1).toLowerCase();
                 switch (ext) {
                 case 'jpg':
                 case 'png':
                 case 'gif':
-                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                +`<td>File</td><td><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a></td>`;
+                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" height="256" width="256"></a><span class="text">${file.name}</span></span>`;
                   break;
                 case 'mp3':
-                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                +`<td>File</td><td></td>`;
+                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a><span>${file.name}</span></span>`;
                   break;
                 case 'mp4':
                 case 'webm':
-                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                +`<td>File</td><td></td>`;
+                  html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a><span>${file.name}</span></span>`;
                   break;
                 default:
-                  html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
-                    +`<td>File</td><td></td>`;
+                  html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
                 }
               }
-
             }
           });
           res.status(200).send(html+END_LISTING_HTML);
@@ -387,4 +377,7 @@ function getStats(req,res) {
 }
 app.use('/stats', [logReqs, getStats]);
 app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
+app.use('/assets/fa',[express.static('./node_modules/font-awesome')]);
+const WARNING_PATH = path.resolve('./warning.png');
+app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
 app.listen(PORT, function(){log.info('Listening on '+PORT)});
