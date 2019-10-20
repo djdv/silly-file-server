@@ -11,9 +11,14 @@ const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000;
 
+const HTML_STYLE = 'table {width: 100%}'
+  +'table, th, td {border-collapse: collapse;}'
+  +'th, td {   border: 2px solid black; padding: 5px; text-align: center; width: fit-content}'
+  +'span {text-align: center; vertical-align: middle; position: relative; display: inline-block}'
 
-const START_LISTING_HTML='<!DOCTYPE html><html><body><h1>Files and folders</h1>:</br>';
-const END_LISTING_HTML='</body></html>';
+const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style></head><body><h1 style="text-align:center">Files and Folders</h1></br><table>'
++'<tr><th>Name</th><th>Type</th><th>Content</th></tr>';
+const END_LISTING_HTML='</table></body></html>';
 
 class Logger {
   getPrefix(type){
@@ -22,12 +27,12 @@ class Logger {
   info(msg){
     let line = this.getPrefix('info')+msg;
     console.log(line);
-    fs.writeSync(logFd,line);
+    fs.write(logFd,line,function(){});
   }
   warn(msg){
     let line = this.getPrefix('warn')+msg;
     console.warn(line);
-    fs.writeSync(logFd,line);
+    fs.write(logFd,line,function(){});
   }
 }
 const log = new Logger();
@@ -51,7 +56,7 @@ const passStore = new PasswordStore();
 
 
 function logReqs(req,res,next) {
-  log.info(`received req to ${req.originalUrl}, ${req.method}`);
+  log.info(`Req to ${req.originalUrl}`);
   next();
 };
 
@@ -113,11 +118,11 @@ class YazlArchiver {
   addFile(filePath) {
     //filepath is absolute, zippath is relative to starting folder
     this.zipfile.addFile(filePath, this.getZipPath(filePath), {mode:0o600});
-    this.filesAdded++;
+    this.filesAdded = (this.filesAdded + 1)|0;
   }
   
   addDirectory(filePath) {
-    this.dirsAdded++;
+    this.dirsAdded = (this.dirsAdded + 1)|0;
   }
   
   getZipPath(filePath) {
@@ -309,35 +314,58 @@ function doZip(req,res,next) {
 }
 
 function serveListing(req,res,next) {
-  let reqPath = req.path;
-  if (req.path.endsWith('/')) {
-    reqPath = req.path.substring(0,req.path.length-1);
-  }
+  let reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
   const objPath = './file-dir'+reqPath;
 
   fs.stat(objPath,function(err,stats) {
-    if (err) {
-      //let express static handle this
-      next();
-    } else if (stats.isDirectory()) {
+    if (!err && stats.isDirectory()) {
       fs.readdir(objPath,{withFileTypes: true},function(err, files) {
-        if (err) {
-          log.warn(`Could not read dir=${objPath}. {err.message}`);
-          res.status(500).send('<h1>Internal server error</h1>');
-        } else {
-          let html = ''+START_LISTING_HTML;
-          let query = req.query.pass ? '?pass='+req.query.pass : '';
+        if (!err) {
+          let html = START_LISTING_HTML;
           files.forEach(function(file){
+            const pathUrl = `/files${reqPath}/${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
             if (file.isDirectory()) {
-              html+=`</br><b>Folder: <a href="/files${reqPath}/${file.name+query}">${file.name}</a></b>`;
+              html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                +`<td>Folder</td><td><a href="${pathUrl}"><b>Enter</b></a></td>`;
             } else {
-              html+=`</br>File: <a href="/files${reqPath}/${file.name+query}">${file.name}</a>`;
+              const period = file.name.lastIndexOf('.');
+              if (period == -1) {
+                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                +`<td>File</td><td></td>`;
+              } else {
+                let ext = file.name.substr(period+1).toLowerCase();
+                switch (ext) {
+                case 'jpg':
+                case 'png':
+                case 'gif':
+                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                +`<td>File</td><td><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" height="256" width="256"></a></td>`;
+                  break;
+                case 'mp3':
+                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                +`<td>File</td><td></td>`;
+                  break;
+                case 'mp4':
+                case 'webm':
+                html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                +`<td>File</td><td></td>`;
+                  break;
+                default:
+                  html+=`<tr><td><a href="${pathUrl}">${file.name}</a></td>`
+                    +`<td>File</td><td></td>`;
+                }
+              }
+
             }
           });
           res.status(200).send(html+END_LISTING_HTML);
+        } else {
+          log.warn(`Could not read dir=${objPath}. {err.message}`);
+          res.status(500).send('<h1>Internal server error</h1>');
         }
       });
     } else {
+      //not err or not dir
       next();
     }
   });
