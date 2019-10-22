@@ -14,7 +14,8 @@ const TIME_TO_PURGE_ZIPS = 60 * 60000;
 
 const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position: relative; display: inline-block; padding: 10px}'
   +' .text {display:block; float:none; margin:auto; position:static}'
-  +' .dl {text-align: center;border: 3px solid black;border-radius: 16px;width: 30%;display: block;margin-left: auto;margin-right: auto}';
+  +' .dl {text-align: center;border: 3px solid black;border-radius: 16px;display: block;}'
+  +' .dlcenter {margin-left: auto; margin-right:auto; width: 30%}';
 
 const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">';
 const END_LISTING_HTML='</div></body></html>';
@@ -29,13 +30,11 @@ class Logger {
   }
   info(msg){
     let line = this.getPrefix('info')+msg;
-    console.log(line);
-    fs.write(logFd,line,function(){});
+    fs.write(logFd,line+'\n',function(){});
   }
   warn(msg){
     let line = this.getPrefix('warn')+msg;
-    console.warn(line);
-    fs.write(logFd,line,function(){});
+    fs.write(logFd,line+'\n',function(){});
   }
 }
 const log = new Logger();
@@ -279,15 +278,18 @@ function packageRecursively(topDirectory, archiver) {
 
 
 function doZip(req,res,next) {
-  if (req.query.zip == '1') {
+  if (req.query.zip != '1') {
+    next();
+  } else {
     //req.path includes slash
-    let reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
+    let reqPath = decodeURIComponent(req.path);
+    reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
     //TODO security still incomplete, prevent this
     if (reqPath == "/inf") {
       res.status(400).send("<h1>Cannot download root</h1>");
     }
     const source = `./file-dir${reqPath}`;
-    const destination = `./file-dir/temp${reqPath}.zip`;
+    const destination = `./temp${reqPath}.zip`;
     
     
     mkdirp(destination.substring(0,destination.lastIndexOf('/')),{mode:0o700},function(err) {
@@ -297,14 +299,14 @@ function doZip(req,res,next) {
           //TODO get rid of the space, I messed up somewhere else.
           const archiver = new YazlArchiver(`./file-dir/ `, destination);
           //package everything
-          packageRecursively(source, archiver).then(()=> {
+          packageRecursively(source, archiver).then(function() {
             archiver.finalizeArchive().then(function() {
               log.info(`Serving zip for ${reqPath} at  ${destination}`);
               res.sendFile(path.resolve(destination));
               setTimeout(function(){
                 log.info(`Cleanup. Deleting zip ${destination}`);
                 fs.unlink(destination,function(err){
-                  log.warn(`Unable to cleanup ${destination}. Is it already gone? {err.message}`);
+                  log.warn(`Unable to cleanup ${destination}. Is it already gone? ${err.message}`);
                 });
               },TIME_TO_PURGE_ZIPS);
             }).catch(function(err){
@@ -323,13 +325,12 @@ function doZip(req,res,next) {
         }
       });
     });
-  } else {
-    next();
   }
 }
 
 function serveListing(req,res,next) {
-  let reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
+  let reqPath = decodeURIComponent(req.path);
+  reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
   const objPath = './file-dir'+reqPath;
 
   fs.stat(objPath,function(err,stats) {
@@ -345,14 +346,14 @@ function serveListing(req,res,next) {
               backUrl+='?pass='+req.query.pass;
             }
             html+=`<a href="${backUrl}"><i class="fa fa-backward" style="color: black; margin-right:15px;border: 5px solid black;border-radius: 10px;padding: 2px 5px 2px 0px;"></i></a>Files and Folders</h1></br>`;
-            html+= `<a style="color: black" href="${req.originalUrl+ (Object.keys(req.query)==0 ? '?zip=1' : '&zip=1')}"><div class="dl">`
+            html+= `<div class="dlcenter"><a style="color: black" href="${req.originalUrl+ (Object.keys(req.query)==0 ? '?zip=1' : '&zip=1')}"><div class="dl">`
               +'<i class="fa fa-floppy-o" style="padding: 5px; font-size: 2em">  Download as Zip</i>'
-              +'</div></a><div>';
+              +'</div></a></div><div>';
           }
           files.forEach(function(file){
             if (passStore.hasAccess(reqPath+'/'+file.name, req.query.pass)) {
               const fileWithQuery = `${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
-              const pathUrl = `/files${reqPath}/${fileWithQuery}`;
+              const pathUrl = `/files${reqPath}/${encodeURIComponent(fileWithQuery)}`;
               if (file.isDirectory()) {
                 html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
               } else {
@@ -369,11 +370,15 @@ function serveListing(req,res,next) {
                     html+= `<span class="main"><a href="${pathUrl}"><img src="${thumbnailPath}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" width="256"></a><span class="text">${file.name}</span></span>`;
                     break;
                   case 'mp3':
-                    html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" width="256"></a><span>${file.name}</span></span>`;
+                    html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/mpeg"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
+                    break;
+                  case 'wav':
+                  case 'ogg':
+                    html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/${ext}"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
                   case 'mp4':
                   case 'webm':
-                    html+=`<span class="main"><a href="${pathUrl}"><img src="${pathUrl}" alt="${file.name}" width="256"></a><span>${file.name}</span></span>`;
+                    html+=`<span class="main"><video controls height="480"><source src=${pathUrl}" type="video/${ext}"></video><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
                   default:
                     html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
@@ -412,7 +417,8 @@ function getStats(req,res) {
 
 
 function makeThumbnail(req,res,next) {
-  const reqPath = req.path.endsWith('/') ? req.path.substring(0,req.path.length-1) : req.path;
+  let reqPath = decodeURIComponent(req.path);
+  reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
   const originalPath = path.resolve('./file-dir','.'+reqPath);
   const lastSlash = reqPath.lastIndexOf('/');
   const directory = path.join('./thumbnails','.'+reqPath.substr(0,lastSlash));
@@ -423,19 +429,24 @@ function makeThumbnail(req,res,next) {
       next();
     } else {
       mkdirp(directory, function(err){
-        if (!err) {          
-          const imageBuffer = fs.readFileSync(originalPath);
-          
-          sharp(imageBuffer)
-            .resize({ width: 256, height: 256, fit: 'inside', withoutEnlargement: true })
-            .toFile(output, function(err, info) {
-              if (!err) {
-                next();
-              } else {
-                log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
-                res.sendFile(originalPath);
-              }
-            });
+        if (!err) {
+          fs.readFile(originalPath,function(err,imageBuffer) {
+            if (!err) {
+              sharp(imageBuffer)
+                .resize({ width: 256, height: 256, fit: 'inside', withoutEnlargement: true })
+                .toFile(output, function(err, info) {
+                  if (!err) {
+                    next();
+                  } else {
+                    log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
+                    res.sendFile(originalPath);
+                  }
+                });
+            } else {
+              log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);            
+              res.sendFile(originalPath);
+            }
+          });
         } else {
           log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
           res.sendFile(originalPath);
