@@ -306,7 +306,9 @@ function doZip(req,res,next) {
               setTimeout(function(){
                 log.info(`Cleanup. Deleting zip ${destination}`);
                 fs.unlink(destination,function(err){
-                  log.warn(`Unable to cleanup ${destination}. Is it already gone? ${err.message}`);
+                  if (err) {
+                    log.warn(`Unable to cleanup ${destination}. Is it already gone? ${err.message}`);
+                  }
                 });
               },TIME_TO_PURGE_ZIPS);
             }).catch(function(err){
@@ -352,8 +354,8 @@ function serveListing(req,res,next) {
           }
           files.forEach(function(file){
             if (passStore.hasAccess(reqPath+'/'+file.name, req.query.pass)) {
-              const fileWithQuery = `${file.name+(req.query.pass ? '?pass='+req.query.pass : '')}`;
-              const pathUrl = `/files${reqPath}/${encodeURIComponent(fileWithQuery)}`;
+              const fileWithQuery = `${encodeURIComponent(file.name)+(req.query.pass ? '?pass='+req.query.pass : '')}`;
+              const pathUrl = `/files${reqPath}/${fileWithQuery}`;
               if (file.isDirectory()) {
                 html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
               } else {
