@@ -1,4 +1,9 @@
 const express = require('express');
+const shrinkRay = require('shrink-ray-current');
+const imagemin = require('imagemin');
+const imagejpg = require('imagemin-mozjpeg');
+const imagegif = require('imagemin-giflossy');
+const imagepng = require('imagemin-pngquant');
 const os = require('os');
 const mkdirp = require('mkdirp');
 const fs = require('graceful-fs');
@@ -6,11 +11,23 @@ const path = require('path');
 const Promise = require('bluebird');
 const yazl = require('yazl');
 const sharp = require('sharp');
-const logFd = fs.openSync('./log.txt','as',0o700);
+
+const FILE_CREATION_MODE = 0o600;
+const DIR_CREATION_MODE = 0o700;
+
+const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
 const app = express();
 const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000;
+
+
+const USE_LOSSY_COMPRESSION = true;
+
+const COMPRESSION_CACHE_SIZE = '512mb';
+const COMPRESSION_MIN_SIZE = '64kb';
+const COMPRESSION_ZLIB_LEVEL = 6;//see https://blogs.akamai.com/2016/02/understanding-brotlis-potential.html
+const COMPRESSION_BROTLI_LEVEL = 5;
 
 const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position: relative; display: inline-block; padding: 10px}'
   +' .text {display:block; float:none; margin:auto; position:static}'
@@ -130,7 +147,7 @@ class YazlArchiver {
 
   addFile(filePath) {
     //filepath is absolute, zippath is relative to starting folder
-    this.zipfile.addFile(filePath, this.getZipPath(filePath), {mode:0o600});
+    this.zipfile.addFile(filePath, this.getZipPath(filePath), {mode:FILE_CREATION_MODE});
     this.filesAdded = (this.filesAdded + 1)|0;
   }
   
@@ -292,7 +309,7 @@ function doZip(req,res,next) {
     const destination = `./temp${reqPath}.zip`;
     
     
-    mkdirp(destination.substring(0,destination.lastIndexOf('/')),{mode:0o700},function(err) {
+    mkdirp(destination.substring(0,destination.lastIndexOf('/')),{mode:DIR_CREATION_MODE},function(err) {
       fs.access(destination, fs.constants.R_OK, function(err) {
         if (err) {
           //probably time to create
@@ -356,6 +373,7 @@ function serveListing(req,res,next) {
             if (passStore.hasAccess(reqPath+'/'+file.name, req.query.pass)) {
               const fileWithQuery = `${encodeURIComponent(file.name)+(req.query.pass ? '?pass='+req.query.pass : '')}`;
               const pathUrl = `/files${reqPath}/${fileWithQuery}`;
+              const lossyUrl = `/lossy${reqPath}/${fileWithQuery}`;
               if (file.isDirectory()) {
                 html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-folder fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
               } else {
@@ -363,13 +381,13 @@ function serveListing(req,res,next) {
                 if (period == -1) {
                   html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color: black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
                 } else {
-                  let ext = file.name.substr(period+1).toLowerCase();
+                  const ext = file.name.substr(period+1).toLowerCase();
                   switch (ext) {
                   case 'jpg':
                   case 'png':
                   case 'gif':
                     const thumbnailPath = `/thumbnails${reqPath}/${fileWithQuery}`;
-                    html+= `<span class="main"><a href="${pathUrl}"><img src="${thumbnailPath}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" width="256"></a><span class="text">${file.name}</span></span>`;
+                    html+= `<span class="main"><a href="${lossyUrl}"><img src="${thumbnailPath}" id=${file.name} onerror="this.src='/assets/warning.png'" alt="${file.name}" width="256"></a><span class="text">${file.name}</span></span>`;
                     break;
                   case 'mp3':
                     html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/mpeg"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
@@ -458,10 +476,87 @@ function makeThumbnail(req,res,next) {
   });
 }
 
+const otfCompression = shrinkRay({
+  cacheSize: COMPRESSION_CACHE_SIZE,
+  threshold: COMPRESSION_MIN_SIZE,
+  zlib: {
+    level: COMPRESSION_ZLIB_LEVEL
+  },
+  brotli: {
+    quality: COMPRESSION_BROTLI_LEVEL
+  },
+  filter: function(req,res) {
+    if (req.baseUrl != '/files' || req.headers['x-no-compression']) {
+      return false; //dont compress
+    } else {
+      return shrinkRay.filter(req,res);
+    }
+  }
+});
+
+function imageCompress(req, res, next) {
+  let reqPath = decodeURIComponent(req.path);
+  reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
+  const originalPath = path.resolve('./file-dir','.'+reqPath);
+  const lossyPath = path.resolve('./lossy','.'+reqPath);
+  
+  if (req.headers['x-no-compression'] || req.query.original == '1') {
+    res.sendFile(originalPath);
+  } else {
+    const dot = req.path.lastIndexOf('.');
+    if (dot != -1) {
+      const ext = req.path.substr(dot+1).toLowerCase();
+      if (ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'gif') {
+        fs.readFile(lossyPath,function(err,data) {
+          if (err) {
+            //cant find, generate.
+            fs.readFile(originalPath,function(err,data){
+              if (err) {
+                log.warn('err=',err);
+                res.sendFile(originalPath);
+              } else {
+                imagemin.buffer(data, {
+                  plugins: [imagejpg({quality:80}), imagepng(), imagegif()]
+                }).then(function(out) {
+                  res.status(200).set('Content-Type', 'image/'+ext).send(out);
+                  const lastSlash = reqPath.lastIndexOf('/');
+                  const directory = path.join('./lossy','.'+reqPath.substr(0,lastSlash));
+                  mkdirp(directory, function(err){
+                    if (!err) {
+                      fs.writeFile(lossyPath, out, {mode: FILE_CREATION_MODE}, function(err){
+                        if (err) {
+                          log.warn(`Error writting lossy file result ${lossyPath}, ${err.message}`);
+                        }
+                      });
+                    } else {
+                      log.warn(`Error making dir for lossy file result ${lossyPath}, ${err.message}`);
+                    }
+                  });
+                }).catch(function(err) {
+                  log.warn('err=',err);
+                  res.sendFile(originalPath);
+                });
+              }
+            });            
+          } else {
+            res.status(200).set('Content-Type', 'image/'+ext).send(data);
+          }
+        });
+      } else {
+        res.status(404).send('<h1>Not found</h1>');
+      }
+    } else {
+      res.status(404).send('<h1>Not found</h1>');
+    }
+  }
+}
+
 app.use('/stats', [logReqs, getStats]);
 app.use('/thumbnails', [forbidden, checkPassword, makeThumbnail, express.static('./thumbnails')]);
-app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
+app.use('/lossy',[forbidden, checkPassword, imageCompress]);
 app.use('/assets/fa',[express.static('./node_modules/font-awesome')]);
 const WARNING_PATH = path.resolve('./warning.png');
 app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
+app.use(otfCompression);
+app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
 app.listen(PORT, function(){log.info('Listening on '+PORT)});
