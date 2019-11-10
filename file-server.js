@@ -37,6 +37,8 @@ const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position:
 const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">';
 const END_LISTING_HTML='</div></body></html>';
 
+const dirMap = {};
+const FILE_DIR = path.join(__dirname,'./file-dir');
 mkdirp.sync('./file-dir');
 mkdirp.sync('./thumbnails');
 mkdirp.sync('./temp');
@@ -55,6 +57,44 @@ class Logger {
   }
 }
 const log = new Logger();
+
+
+function addWatchers(folder) {
+  log.info('addwatcher to '+folder);
+  fs.readdir(folder, {withFileTypes: true}, function(err, files) {
+    if (err) {
+      log.warn('Error in addWatchers, '+err.message);
+    } else {
+      files.forEach(function(file){
+        if (file.isDirectory()) {
+          addWatchers(path.join(folder,file.name));
+        }
+      });
+    }
+  });
+  dirMap[folder] = fs.watch(folder,{persistent: false},function(event, name) {
+    //name may be folder
+    if (event == 'rename') {
+      setTimeout(function(){
+        let originalPath = path.join(folder, name);
+        fs.stat(originalPath, function(err, stat) {
+          let lossyPath = originalPath.replace(FILE_DIR,path.resolve('./lossy'));
+          log.info('dealing with lossy for '+originalPath+' and '+lossyPath);
+          if (!err) {
+            makeLossyImage(originalPath, lossyPath, false);
+          } else {
+            fs.unlink(lossyPath, function(err) {
+              if (err) {
+                log.warn('Could not delete path='+lossyPath);
+              }
+            });
+          }
+        });
+      },500);
+    }
+  });
+}
+addWatchers(FILE_DIR);
 
 class PasswordStore {
   constructor() {
@@ -86,7 +126,7 @@ const passStore = new PasswordStore();
 
 
 function logReqs(req,res,next) {
-  log.info(`Req to ${req.originalUrl}`);
+  log.info(`Req to ${req.originalUrl} from ${req.ip}`);
   next();
 };
 
@@ -381,7 +421,7 @@ function serveListing(req,res,next) {
                 if (period == -1) {
                   html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color: black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
                 } else {
-                  const ext = file.name.substr(period+1).toLowerCase();
+                  let ext = file.name.substr(period+1).toLowerCase();
                   switch (ext) {
                   case 'jpg':
                   case 'png':
@@ -396,9 +436,11 @@ function serveListing(req,res,next) {
                   case 'ogg':
                     html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/${ext}"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
+                  case 'm4v':
+                    ext="mp4";
                   case 'mp4':
                   case 'webm':
-                    html+=`<span class="main"><video controls height="480"><source src=${pathUrl}" type="video/${ext}"></video><div><a href="${pathUrl}">${file.name}</a></div></span>`;
+                    html+=`<span class="main"><video controls height="480"><source src="${pathUrl}" type="video/${ext}"></video><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
                   default:
                     html+=`<span class="main"><a href="${pathUrl}"><i class="fa fa-file fa-6" style="color:black; font-size: 17em"></i></a><span class="text">${file.name}</span></span>`;
@@ -439,7 +481,7 @@ function getStats(req,res) {
 function makeThumbnail(req,res,next) {
   let reqPath = decodeURIComponent(req.path);
   reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
-  const originalPath = path.resolve('./file-dir','.'+reqPath);
+  const originalPath = path.join(FILE_DIR,'.'+reqPath);
   const lastSlash = reqPath.lastIndexOf('/');
   const directory = path.join('./thumbnails','.'+reqPath.substr(0,lastSlash));
   const file = reqPath.substr(lastSlash+1);
@@ -494,10 +536,51 @@ const otfCompression = shrinkRay({
   }
 });
 
+function makeLossyImage(originalPath, lossyPath, returnImage) {
+  return new Promise(function(resolve, reject) {
+    let func = returnImage ? fs.readFile : fs.stat;
+    func(lossyPath,function(err,data) {
+      if (err) {
+        //cant find, generate.
+        fs.readFile(originalPath,function(err,data){
+          if (err) {
+            log.warn('err='+err.message);
+            reject();
+          } else {
+            imagemin.buffer(data, {
+              plugins: [imagejpg({quality:80}), imagepng(), imagegif()]
+            }).then(function(out) {
+              const lastSlash = lossyPath.lastIndexOf('/');
+              const directory = lossyPath.substr(0,lastSlash);
+              mkdirp(directory, function(err){
+                if (!err) {
+                  fs.writeFile(lossyPath, out, {mode: FILE_CREATION_MODE}, function(err){
+                    if (err) {
+                      log.warn(`Error writting lossy file result ${lossyPath}, ${err.message}`);
+                    }
+                  });
+                } else {
+                  log.warn(`Error making dir for lossy file result ${lossyPath}, ${err.message}`);
+                }
+              });
+              resolve(out);
+            }).catch(function(err) {
+              log.warn('err='+err.message);
+              reject();
+            });
+          }
+        });
+      } else {
+        resolve(returnImage ? data : undefined);
+      }
+    });
+  });
+}
+
 function imageCompress(req, res, next) {
   let reqPath = decodeURIComponent(req.path);
   reqPath = reqPath.endsWith('/') ? reqPath.substring(0,reqPath.length-1) : reqPath;
-  const originalPath = path.resolve('./file-dir','.'+reqPath);
+  const originalPath = path.join(FILE_DIR,'.'+reqPath);
   const lossyPath = path.resolve('./lossy','.'+reqPath);
   
   if (req.headers['x-no-compression'] || req.query.original == '1') {
@@ -507,40 +590,10 @@ function imageCompress(req, res, next) {
     if (dot != -1) {
       const ext = req.path.substr(dot+1).toLowerCase();
       if (ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'gif') {
-        fs.readFile(lossyPath,function(err,data) {
-          if (err) {
-            //cant find, generate.
-            fs.readFile(originalPath,function(err,data){
-              if (err) {
-                log.warn('err=',err);
-                res.sendFile(originalPath);
-              } else {
-                imagemin.buffer(data, {
-                  plugins: [imagejpg({quality:80}), imagepng(), imagegif()]
-                }).then(function(out) {
-                  res.status(200).set('Content-Type', 'image/'+ext).send(out);
-                  const lastSlash = reqPath.lastIndexOf('/');
-                  const directory = path.join('./lossy','.'+reqPath.substr(0,lastSlash));
-                  mkdirp(directory, function(err){
-                    if (!err) {
-                      fs.writeFile(lossyPath, out, {mode: FILE_CREATION_MODE}, function(err){
-                        if (err) {
-                          log.warn(`Error writting lossy file result ${lossyPath}, ${err.message}`);
-                        }
-                      });
-                    } else {
-                      log.warn(`Error making dir for lossy file result ${lossyPath}, ${err.message}`);
-                    }
-                  });
-                }).catch(function(err) {
-                  log.warn('err=',err);
-                  res.sendFile(originalPath);
-                });
-              }
-            });            
-          } else {
-            res.status(200).set('Content-Type', 'image/'+ext).send(data);
-          }
+        makeLossyImage(originalPath, lossyPath, true).then(function(image) {
+          res.status(200).set('Content-Type', 'image/'+ext).send(image);
+        }).catch(function() {
+          res.sendFile(originalPath);
         });
       } else {
         res.status(404).send('<h1>Not found</h1>');
@@ -553,7 +606,7 @@ function imageCompress(req, res, next) {
 
 app.use('/stats', [logReqs, getStats]);
 app.use('/thumbnails', [forbidden, checkPassword, makeThumbnail, express.static('./thumbnails')]);
-app.use('/lossy',[forbidden, checkPassword, imageCompress]);
+app.use('/lossy',[logReqs, forbidden, checkPassword, imageCompress]);
 app.use('/assets/fa',[express.static('./node_modules/font-awesome')]);
 const WARNING_PATH = path.resolve('./warning.png');
 app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
