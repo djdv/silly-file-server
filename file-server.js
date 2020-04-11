@@ -2,7 +2,7 @@ const express = require('express');
 const shrinkRay = require('shrink-ray-current');
 const imagemin = require('imagemin');
 const imagejpg = require('imagemin-mozjpeg');
-const imagegif = require('imagemin-giflossy');
+const imagegif = require('imagemin-gifsicle');
 const imagepng = require('imagemin-pngquant');
 const os = require('os');
 const mkdirp = require('mkdirp');
@@ -60,6 +60,7 @@ const log = new Logger();
 
 
 function addWatchers(folder) {
+  return false;
   log.info('addwatcher to '+folder);
   fs.readdir(folder, {withFileTypes: true}, function(err, files) {
     if (err) {
