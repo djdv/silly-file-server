@@ -437,6 +437,8 @@ function serveListing(req,res,next) {
                   case 'ogg':
                     html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/${ext}"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
+                  case 'm4a':
+                    html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/mp4"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                   case 'm4v':
                     ext="mp4";
                   case 'mp4':
