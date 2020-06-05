@@ -610,7 +610,7 @@ function imageCompress(req, res, next) {
 
 app.use('/stats', [logReqs, getStats]);
 app.use('/thumbnails', [forbidden, checkPassword, makeThumbnail, express.static('./thumbnails')]);
-app.use('/lossy',[logReqs, forbidden, checkPassword, imageCompress]);
+app.use('/lossy',[logReqs, forbidden, checkPassword, serveListing, imageCompress]);
 app.use('/assets/fa',[express.static('./node_modules/font-awesome')]);
 const WARNING_PATH = path.resolve('./warning.png');
 app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
