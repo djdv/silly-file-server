@@ -34,7 +34,7 @@ const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position:
   +' .dl {text-align: center;border: 3px solid black;border-radius: 16px;display: block;}'
   +' .dlcenter {margin-left: auto; margin-right:auto; width: 30%}';
 
-const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body><h1 style="text-align:center">';
+const START_LISTING_HTML='<!DOCTYPE html><html><head><style>'+HTML_STYLE+'</style><link rel="stylesheet" href="/assets/fa/css/font-awesome.min.css"></head><body ';
 const END_LISTING_HTML='</div></body></html>';
 
 const dirMap = {};
@@ -397,7 +397,16 @@ function serveListing(req,res,next) {
     if (!err && stats.isDirectory()) {
       fs.readdir(objPath,{withFileTypes: true},function(err, files) {
         if (!err) {
-          let html = START_LISTING_HTML;
+          let backgroundColor = "#ffffff";
+          if (req.ip.indexOf('.') != -1) { //ipv4, that's nice.
+            let ip = req.ip;
+            if (ip.indexOf(':') != -1) {
+              ip = ip.substr(ip.lastIndexOf(':')+1);
+            }
+            const sections = ip.split('.');
+            backgroundColor = `rgb(${sections[0]},${sections[1]},${sections[2]})`;
+          }
+          let html = START_LISTING_HTML+`style="background: ${backgroundColor}"><h1 style="text-align:center">`;
           if (reqPath == "/inf") {
             html+= 'Files and Folders</h1></br><div>';
           } else {
