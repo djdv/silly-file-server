@@ -444,6 +444,7 @@ function serveListing(req,res,next) {
                     break;
                   case 'wav':
                   case 'ogg':
+                  case 'flac':
                     html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/${ext}"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
                   case 'm4a':
