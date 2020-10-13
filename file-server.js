@@ -442,6 +442,8 @@ function serveListing(req,res,next) {
                   case 'mp3':
                     html+=`<span class="main"><audio controls width="256"><source src="${pathUrl}" type="audio/mpeg"></audio><div><a href="${pathUrl}">${file.name}</a></div></span>`;
                     break;
+                  case 'opus':
+                    ext="ogg; codecs=opus";
                   case 'wav':
                   case 'ogg':
                   case 'flac':
