@@ -620,6 +620,16 @@ function imageCompress(req, res, next) {
   }
 }
 
+function closeOnSignals(listener, signals) {
+  let shutdown = function() {
+    listener.close();
+    process.exit();
+  }
+  for (const signal of signals) {
+    process.on(signal, shutdown);
+  }
+}
+
 app.use('/stats', [logReqs, getStats]);
 app.use('/thumbnails', [forbidden, checkPassword, makeThumbnail, express.static('./thumbnails')]);
 app.use('/lossy',[logReqs, forbidden, checkPassword, serveListing, imageCompress]);
@@ -628,4 +638,6 @@ const WARNING_PATH = path.resolve('./warning.png');
 app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
 app.use(otfCompression);
 app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
-app.listen(PORT, function(){log.info('Listening on '+PORT)});
+
+let listener = app.listen(PORT, function(){log.info('Listening on '+PORT)});
+closeOnSignals(listener, ['SIGTERM', 'SIGINT', 'SIGHUP']);
