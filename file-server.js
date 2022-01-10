@@ -8,7 +8,6 @@ const os = require('os');
 const mkdirp = require('mkdirp');
 const fs = require('graceful-fs');
 const path = require('path');
-const Promise = require('bluebird');
 const yazl = require('yazl');
 const sharp = require('sharp');
 
@@ -16,11 +15,10 @@ const FILE_CREATION_MODE = 0o600;
 const DIR_CREATION_MODE = 0o700;
 
 const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
-const app = express();
+const IS_HTTPS = true;
 const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
-const TIME_TO_PURGE_ZIPS = 60 * 60000;
-
+const TIME_TO_PURGE_ZIPS = 60 * 60000 * 24;
 
 const USE_LOSSY_COMPRESSION = true;
 
@@ -28,6 +26,31 @@ const COMPRESSION_CACHE_SIZE = '512mb';
 const COMPRESSION_MIN_SIZE = '64kb';
 const COMPRESSION_ZLIB_LEVEL = 6;//see https://blogs.akamai.com/2016/02/understanding-brotlis-potential.html
 const COMPRESSION_BROTLI_LEVEL = 5;
+
+let httpModule;
+const app = express();
+if (IS_HTTPS) {
+  const HTTPS_KEY = fs.readFileSync('./https.key');
+  const HTTPS_CERT = fs.readFileSync('./https.cert');
+
+  const crypto = require('crypto');
+  let consts = crypto.constants;
+  
+  const httpsOptions = {key: HTTPS_KEY, cert: HTTPS_CERT,
+                        secureOptions: consts.SSL_OP_NO_SSLv2 |
+                                       consts.SSL_OP_NO_SSLv3 |
+                                       consts.SSL_OP_NO_TLSv1 |
+                                       consts.SSL_OP_NO_TLSv1_11};
+  const https = require('https');
+  httpModule = https.createServer(httpsOptions, app);
+} else {
+  const http = require('http');
+  httpModule = http.createServer(app);
+}
+httpModule.listen(PORT, '0.0.0.0', () => {
+  log.info('Listening on '+PORT);
+  closeOnSignals(httpModule, ['SIGTERM', 'SIGINT', 'SIGHUP']);
+});
 
 const HTML_STYLE = '.main {text-align: center; vertical-align: middle; position: relative; display: inline-block; padding: 10px}'
   +' .text {display:block; float:none; margin:auto; position:static}'
@@ -350,7 +373,7 @@ function doZip(req,res,next) {
     const destination = `./temp${reqPath}.zip`;
     
     
-    mkdirp(destination.substring(0,destination.lastIndexOf('/')),{mode:DIR_CREATION_MODE},function(err) {
+    mkdirp(destination.substring(0,destination.lastIndexOf('/')),{mode:DIR_CREATION_MODE}).then(()=> {
       fs.access(destination, fs.constants.R_OK, function(err) {
         if (err) {
           //probably time to create
@@ -506,29 +529,27 @@ function makeThumbnail(req,res,next) {
     if (!err) {
       next();
     } else {
-      mkdirp(directory, function(err){
-        if (!err) {
-          fs.readFile(originalPath,function(err,imageBuffer) {
-            if (!err) {
-              sharp(imageBuffer)
-                .resize({ width: 256, height: 256, fit: 'inside', withoutEnlargement: true })
-                .toFile(output, function(err, info) {
-                  if (!err) {
-                    next();
-                  } else {
-                    log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
-                    res.sendFile(originalPath);
-                  }
-                });
-            } else {
-              log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);            
-              res.sendFile(originalPath);
-            }
-          });
-        } else {
-          log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
-          res.sendFile(originalPath);
-        }
+      mkdirp(directory).then(() => {
+        fs.readFile(originalPath,function(err,imageBuffer) {
+          if (!err) {
+            sharp(imageBuffer)
+              .resize({ width: 256, height: 256, fit: 'inside', withoutEnlargement: true })
+              .toFile(output, function(err, info) {
+                if (!err) {
+                  next();
+                } else {
+                  log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
+                  res.sendFile(originalPath);
+                }
+              });
+          } else {
+            log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);            
+            res.sendFile(originalPath);
+          }
+        });
+      }).catch((err)=> {
+        log.warn(`Could not create thumbnail for ${originalPath}, ${err.message}`);
+        res.sendFile(originalPath);
       });
     }
   });
@@ -568,16 +589,14 @@ function makeLossyImage(originalPath, lossyPath, returnImage) {
             }).then(function(out) {
               const lastSlash = lossyPath.lastIndexOf('/');
               const directory = lossyPath.substr(0,lastSlash);
-              mkdirp(directory, function(err){
-                if (!err) {
-                  fs.writeFile(lossyPath, out, {mode: FILE_CREATION_MODE}, function(err){
-                    if (err) {
-                      log.warn(`Error writting lossy file result ${lossyPath}, ${err.message}`);
-                    }
-                  });
-                } else {
-                  log.warn(`Error making dir for lossy file result ${lossyPath}, ${err.message}`);
-                }
+              mkdirp(directory).then(() => {
+                fs.writeFile(lossyPath, out, {mode: FILE_CREATION_MODE}, function(err){
+                  if (err) {
+                    log.warn(`Error writting lossy file result ${lossyPath}, ${err.message}`);
+                  }
+                });
+              }).catch((err)=>{
+                log.warn(`Error making dir for lossy file result ${lossyPath}, ${err.message}`);
               });
               resolve(out);
             }).catch(function(err) {
@@ -638,6 +657,3 @@ const WARNING_PATH = path.resolve('./warning.png');
 app.use('/assets/warning.png',[function(req,res){res.sendFile(WARNING_PATH);}]);
 app.use(otfCompression);
 app.use('/files', [logReqs, forbidden, checkExpire, checkPassword, doZip, serveListing, serveStatic]);
-
-let listener = app.listen(PORT, function(){log.info('Listening on '+PORT)});
-closeOnSignals(listener, ['SIGTERM', 'SIGINT', 'SIGHUP']);
