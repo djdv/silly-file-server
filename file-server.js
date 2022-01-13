@@ -10,13 +10,17 @@ const fs = require('graceful-fs');
 const path = require('path');
 const yazl = require('yazl');
 const sharp = require('sharp');
+const yargs = require('yargs');
+
+const argv = parseArguments();
+const NETWORK_INTERFACE = argv.bindif
+const PORT = argv.port
 
 const FILE_CREATION_MODE = 0o600;
 const DIR_CREATION_MODE = 0o700;
 
 const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
 const IS_HTTPS = true;
-const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000 * 24;
 
@@ -47,7 +51,7 @@ if (IS_HTTPS) {
   const http = require('http');
   httpModule = http.createServer(app);
 }
-httpModule.listen(PORT, '0.0.0.0', () => {
+httpModule.listen(PORT, NETWORK_INTERFACE, () => {
   log.info('Listening on '+PORT);
   closeOnSignals(httpModule, ['SIGTERM', 'SIGINT', 'SIGHUP']);
 });
@@ -647,6 +651,25 @@ function closeOnSignals(listener, signals) {
   for (const signal of signals) {
     process.on(signal, shutdown);
   }
+}
+
+function parseArguments() {
+  return yargs(process.argv.slice(2))
+    .option('bindif', {
+      type: 'string',
+      default: '0.0.0.0',
+      description: 'Interface used by the server',
+      alias: 'b'
+    })
+    .option('port', {
+      type: 'int',
+      default: 12001,
+      description: 'Port used by the server',
+      alias: 'p'
+    })
+    .help()
+    .alias('help', 'h')
+    .argv;
 }
 
 app.use('/stats', [logReqs, getStats]);

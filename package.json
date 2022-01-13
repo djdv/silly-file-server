@@ -27,6 +27,7 @@
     "node-zopfli-es": "^1.0.6",
     "sharp": "^0.23.1",
     "shrink-ray-current": "^4.1.2",
+    "yargs": "^17.3.1",
     "yazl": "^2.5.1"
   }
 }
