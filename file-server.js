@@ -20,7 +20,6 @@ const FILE_CREATION_MODE = 0o600;
 const DIR_CREATION_MODE = 0o700;
 
 const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
-const IS_HTTPS = true;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000 * 24;
 
@@ -31,11 +30,15 @@ const COMPRESSION_MIN_SIZE = '64kb';
 const COMPRESSION_ZLIB_LEVEL = 6;//see https://blogs.akamai.com/2016/02/understanding-brotlis-potential.html
 const COMPRESSION_BROTLI_LEVEL = 5;
 
+const HTTPS_KEY_PATH = argv.key
+const HTTPS_CERT_PATH = argv.cert
+const IS_HTTPS = haveHTTPSKeys()
+
 let httpModule;
 const app = express();
 if (IS_HTTPS) {
-  const HTTPS_KEY = fs.readFileSync('./https.key');
-  const HTTPS_CERT = fs.readFileSync('./https.cert');
+  const HTTPS_KEY = fs.readFileSync(HTTPS_KEY_PATH);
+  const HTTPS_CERT = fs.readFileSync(HTTPS_CERT_PATH);
 
   const crypto = require('crypto');
   let consts = crypto.constants;
@@ -653,6 +656,15 @@ function closeOnSignals(listener, signals) {
   }
 }
 
+function haveHTTPSKeys() {
+  for (const fp of [HTTPS_KEY_PATH, HTTPS_CERT_PATH]) {
+    if (!fs.existsSync(fp)) {
+		return false;
+    }
+  }
+  return true;
+}
+
 function parseArguments() {
   return yargs(process.argv.slice(2))
     .option('bindif', {
@@ -666,6 +678,18 @@ function parseArguments() {
       default: 12001,
       description: 'Port used by the server',
       alias: 'p'
+    })
+    .option('key', {
+      type: 'string',
+      default: './https.key',
+      description: 'HTTPS key file path',
+      alias: 'k'
+    })
+	.option('cert', {
+      type: 'string',
+      default: './https.cert',
+      description: 'HTTPS certificate file path',
+      alias: 'c'
     })
     .help()
     .alias('help', 'h')
