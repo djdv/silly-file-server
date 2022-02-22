@@ -15,7 +15,9 @@ const FILE_CREATION_MODE = 0o600;
 const DIR_CREATION_MODE = 0o700;
 
 const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
-const IS_HTTPS = true;
+const HTTPS_KEY_PATH = './https.key'
+const HTTPS_CERT_PATH = './https.cert'
+const IS_HTTPS = haveHTTPSKeys()
 const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000 * 24;
@@ -30,8 +32,8 @@ const COMPRESSION_BROTLI_LEVEL = 5;
 let httpModule;
 const app = express();
 if (IS_HTTPS) {
-  const HTTPS_KEY = fs.readFileSync('./https.key');
-  const HTTPS_CERT = fs.readFileSync('./https.cert');
+  const HTTPS_KEY = fs.readFileSync(HTTPS_KEY_PATH);
+  const HTTPS_CERT = fs.readFileSync(HTTPS_CERT_PATH);
 
   const crypto = require('crypto');
   let consts = crypto.constants;
@@ -648,6 +650,15 @@ function closeOnSignals(listener, signals) {
   for (const signal of signals) {
     process.on(signal, shutdown);
   }
+}
+
+function haveHTTPSKeys() {
+  for (const fp of [HTTPS_KEY_PATH, HTTPS_CERT_PATH]) {
+    if (!fs.existsSync(fp)) {
+		return false;
+    }
+  }
+  return true;
 }
 
 app.use('/stats', [logReqs, getStats]);
