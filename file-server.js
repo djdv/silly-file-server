@@ -457,6 +457,7 @@ function serveListing(req,res,next) {
                   let ext = file.name.substr(period+1).toLowerCase();
                   switch (ext) {
                   case 'jpg':
+                  case 'jpeg':
                   case 'png':
                   case 'gif':
                     const thumbnailPath = `/thumbnails${reqPath}/${fileWithQuery}`;
