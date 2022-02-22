@@ -10,6 +10,10 @@ const fs = require('graceful-fs');
 const path = require('path');
 const yazl = require('yazl');
 const sharp = require('sharp');
+const HTTP_NETWORK_INTERFACE = '0.0.0.0'
+const HTTP_PORT = 12001
+const HTTPS_NETWORK_INTERFACE = '0.0.0.0'
+const HTTPS_PORT = 12002
 
 const FILE_CREATION_MODE = 0o600;
 const DIR_CREATION_MODE = 0o700;
@@ -18,7 +22,6 @@ const logFd = fs.openSync('./log.txt','as',FILE_CREATION_MODE);
 const HTTPS_KEY_PATH = './https.key'
 const HTTPS_CERT_PATH = './https.cert'
 const IS_HTTPS = haveHTTPSKeys()
-const PORT = 12001;
 const TIME_BETWEEN_PASSWORD_CHECK = 5 * 60000;
 const TIME_TO_PURGE_ZIPS = 60 * 60000 * 24;
 
@@ -30,6 +33,7 @@ const COMPRESSION_ZLIB_LEVEL = 6;//see https://blogs.akamai.com/2016/02/understa
 const COMPRESSION_BROTLI_LEVEL = 5;
 
 let httpModule;
+const http = require('http');
 const app = express();
 if (IS_HTTPS) {
   const HTTPS_KEY = fs.readFileSync(HTTPS_KEY_PATH);
@@ -44,13 +48,18 @@ if (IS_HTTPS) {
                                        consts.SSL_OP_NO_TLSv1 |
                                        consts.SSL_OP_NO_TLSv1_11};
   const https = require('https');
-  httpModule = https.createServer(httpsOptions, app);
+  let httpsModule = https.createServer(httpsOptions, app);
+  httpsModule.listen(HTTPS_PORT, HTTPS_NETWORK_INTERFACE, () => {
+    log.info('Listening on: https://' + HTTPS_NETWORK_INTERFACE + ':' + HTTPS_PORT);
+      closeOnSignals(httpsModule, ['SIGTERM', 'SIGINT', 'SIGHUP']);
+  });
+  httpModule = http.createServer(app);
 } else {
-  const http = require('http');
   httpModule = http.createServer(app);
 }
-httpModule.listen(PORT, '0.0.0.0', () => {
-  log.info('Listening on '+PORT);
+
+httpModule.listen(HTTP_PORT, HTTP_NETWORK_INTERFACE, () => {
+  log.info('Listening on: http://' + HTTP_NETWORK_INTERFACE + ':' + HTTP_PORT);
   closeOnSignals(httpModule, ['SIGTERM', 'SIGINT', 'SIGHUP']);
 });
 
